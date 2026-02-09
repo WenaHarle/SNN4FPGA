@@ -1,6 +1,7 @@
 // snn_ecg_net.v
 // 3-layer SNN: 30->30->30->5, sequential per layer per timestep.
 // start: one timestep request (pulse ok). done: 1-cycle pulse when outputs valid.
+
 `timescale 1ns/1ps
 module snn_ecg_net #(
   parameter integer N_IN = 30
@@ -13,7 +14,6 @@ module snn_ecg_net #(
   output wire [4:0]      spikes_out_bits
 );
 
-  // Explicit regs declared BEFORE instantiation (avoid implicit nets)
   reg start_l1, start_l2, start_l3;
 
   wire l1_done, l2_done, l3_done;
@@ -81,12 +81,17 @@ module snn_ecg_net #(
       start_l2 <= 1'b0;
       start_l3 <= 1'b0;
 
-      if(tst == T_IDLE) start_latched <= 1'b0;
-      if(start) start_latched <= 1'b1;
+      // ---- FIX: latch start pulse in IDLE ----
+      if (tst == T_IDLE) begin
+        start_latched <= start_latched | start;
+      end else begin
+        start_latched <= 1'b0;
+      end
 
       case(tst)
         T_IDLE: begin
-          if(start_latched) begin
+          // ---- FIX: check start OR latched ----
+          if(start || start_latched) begin
             start_l1 <= 1'b1;
             tst <= T_L1;
           end
