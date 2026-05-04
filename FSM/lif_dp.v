@@ -1,89 +1,108 @@
 `timescale 1ns/1ps
 // ============================================================================
 // lif_dp.v
-// Datapath for one LIF layer (ps/ns accumulator & spike buffer, mem array).
-// Matched to monolithic behavior:
-//   - fired computed from mem_plus = decay(mem) + acc_ps
-//   - mem update occurs only on wr1/wr0 pulses
-//   - spike bit written on wr1/wr0 pulses
+// LIF Datapath
+// Menghitung akumulasi bobot, decay membrane, dan update spike.
+// Semua kontrol (acc_step, mem_we, mem_sub) berasal dari FSM di lif_ctl.
 // ============================================================================
 module lif_dp #(
   parameter integer N_OUT = 30,
-  parameter WEIGHT_FILE = "fc1_w_q44_int8.mem"
+  parameter WEIGHT_FILE   = "fc1_w_q44_int8.mem"
 )(
   input  wire             clk,
   input  wire             rst_n,
-
   input  wire [29:0]      spikes_in_bits,
+
   input  wire [5:0]       outi_ps,
   input  wire [5:0]       ini_ps,
 
   input  wire             clr_all,
   input  wire             acc_init,
   input  wire             acc_step,
-  input  wire             wr1,
-  input  wire             wr0,
+
+  input  wire             wr1,     // write fired
+  input  wire             wr0,     // write not fired
 
   output wire             fired,
   output wire [N_OUT-1:0] spikes_out_bits
 );
 
-  localparam integer THR_Q44     = 14;
-  localparam integer DECAY_SHIFT = 4;
+  localparam signed [23:0] THRESHOLD   = 24'sd14;
+  localparam integer       DECAY_SHIFT = 4;
 
-  reg signed [7:0] wmem [0:(N_OUT*30)-1];
-  initial begin
-    $readmemh(WEIGHT_FILE, wmem);
-  end
+  // ---------------- Weight Memory ----------------
+  (* ram_style = "block" *)
+  reg signed [7:0] weight_mem [0:(N_OUT*30)-1];
+  initial $readmemh(WEIGHT_FILE, weight_mem);
 
-  reg signed [23:0] acc_ps, acc_ns;
-  reg [N_OUT-1:0]   spk_ps, spk_ns;
+  // ---------------- Registers ----------------
+  reg  signed [23:0] acc_reg;
+  reg  signed [23:0] membrane [0:N_OUT-1];
+  reg  [N_OUT-1:0]   spike_reg;
 
-  reg signed [23:0] mem [0:N_OUT-1];
-  integer k;
+  assign spikes_out_bits = spike_reg;
 
-  assign spikes_out_bits = spk_ps;
+  // ---------------- Membrane Calculation ----------------
+  wire signed [23:0] mem_current = membrane[outi_ps];
+  wire signed [23:0] mem_decay   = mem_current - (mem_current >>> DECAY_SHIFT);
+  wire signed [23:0] mem_sum     = mem_decay + acc_reg;
 
-  wire signed [23:0] mem_cur   = mem[outi_ps];
-  wire signed [23:0] mem_decay = mem_cur - (mem_cur >>> DECAY_SHIFT);
-  wire signed [23:0] mem_plus  = mem_decay + acc_ps;
+  assign fired = (mem_sum >= THRESHOLD);
 
-  assign fired = (mem_plus >= THR_Q44);
+  // Data yang ditulis ke membrane (ditentukan FSM)
+  wire mem_we  = (wr1 | wr0);
+  wire mem_sub = wr1;
+
+  wire signed [23:0] mem_wdata = mem_sub ? (mem_sum - THRESHOLD) : mem_sum;
+
+  // ---------------- Accumulator Logic ----------------
+  // BRAM-friendly: baca weight secara sinkron + pipeline 1 tahap.
+  // acc_step: tahap "capture" (alamat & spike). Penjumlahan terjadi pada siklus berikutnya.
+
+  reg signed [7:0]  w_q;
+  reg               spike_q;
+  reg               valid_q;
+
+  wire [15:0] waddr = (outi_ps * 16'd30) + ini_ps;
+
+  // ---------------- Sequential Update ----------------
+  integer i;
 
   always @(posedge clk or negedge rst_n) begin
     if(!rst_n) begin
-      acc_ps <= 24'sd0;
-      spk_ps <= {N_OUT{1'b0}};
-      for(k=0; k<N_OUT; k=k+1) mem[k] <= 24'sd0;
+      acc_reg   <= 24'sd0;
+      w_q       <= 8'sd0;
+      spike_q   <= 1'b0;
+      valid_q   <= 1'b0;
+
+      spike_reg <= {N_OUT{1'b0}};
+      for(i=0;i<N_OUT;i=i+1)
+        membrane[i] <= 24'sd0;
     end else begin
-      acc_ps <= acc_ns;
-      spk_ps <= spk_ns;
+      // Default: hold
+      // 1) Accumulator update (pakai data yang di-capture pada siklus sebelumnya)
+      if (clr_all || acc_init) begin
+        acc_reg <= 24'sd0;
+        valid_q <= 1'b0; // flush pipeline saat reset accumulator
+      end else if (valid_q && spike_q) begin
+        acc_reg <= acc_reg + {{16{w_q[7]}}, w_q}; // sign extend
+      end
 
-      if (wr1)      mem[outi_ps] <= mem_plus - THR_Q44;
-      else if (wr0) mem[outi_ps] <= mem_plus;
+      // 2) Capture weight + spike untuk siklus berikutnya
+      if (acc_step) begin
+        w_q     <= weight_mem[waddr];
+        spike_q <= spikes_in_bits[ini_ps];
+        valid_q <= 1'b1;
+      end else if (!(clr_all || acc_init)) begin
+        valid_q <= 1'b0;
+      end
+
+      // 3) Membrane + spike writeback (dikontrol FSM)
+      if (mem_we) begin
+        membrane[outi_ps]   <= mem_wdata;
+        spike_reg[outi_ps]  <= mem_sub; // 1 kalau fired, 0 kalau not fired
+      end
     end
-  end
-
-  reg signed [7:0] w8;
-  always @* begin
-    acc_ns = acc_ps;
-    spk_ns = spk_ps;
-
-    if (clr_all) begin
-      acc_ns = 24'sd0;
-      spk_ns = {N_OUT{1'b0}};
-    end
-
-    if (acc_init) begin
-      acc_ns = 24'sd0;
-    end else if (acc_step) begin
-      w8 = wmem[outi_ps*30 + ini_ps];
-      if (spikes_in_bits[ini_ps])
-        acc_ns = acc_ps + {{16{w8[7]}}, w8};
-    end
-
-    if (wr1)      spk_ns[outi_ps] = 1'b1;
-    else if (wr0) spk_ns[outi_ps] = 1'b0;
   end
 
 endmodule

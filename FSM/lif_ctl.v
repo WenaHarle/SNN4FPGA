@@ -1,20 +1,15 @@
 `timescale 1ns/1ps
 // ============================================================================
 // lif_ctl.v
-// Layer controller (FSM) with ps/ns state, BUT outputs are combinational
-// (so timing matches the working monolithic behavior).
-//
-// Outputs are 1-cycle pulses determined directly by st_ps (Moore style).
+// Control FSM for LIF layer engine
 // ============================================================================
 module lif_ctl(
   input  wire clk,
   input  wire rst_n,
   input  wire start,
-
   input  wire ini_last,
   input  wire out_last,
   input  wire fired,
-
   output wire done,
   output wire clr_all,
   output wire acc_init,
@@ -32,6 +27,7 @@ module lif_ctl(
     S1  = 4'd1,   // clear/all init
     S2  = 4'd2,   // acc init for new out neuron
     S3  = 4'd3,   // accumulate loop
+    S6  = 4'd6,   // flush weight pipeline (1 cycle)
     S10 = 4'd10,  // decide fired
     S11 = 4'd11,  // write fired
     S12 = 4'd12,  // write not fired
@@ -41,23 +37,24 @@ module lif_ctl(
   // ps <= ns (only state is registered here)
   always @(posedge clk or negedge rst_n) begin
     if(!rst_n) st_ps <= S0;
-    else       st_ps <= st_ns;
+    else      st_ps <= st_ns;
   end
 
   // next-state
   always @* begin
     st_ns = st_ps;
     case(st_ps)
-      S0:  st_ns = start    ? S1  : S0;
-      S1:  st_ns = S2;
-      S2:  st_ns = S3;
-      S3:  st_ns = ini_last ? S10 : S3;
-      S10: st_ns = fired    ? S11 : S12;
+      S0 : st_ns = start ? S1 : S0;
+      S1 : st_ns = S2;
+      S2 : st_ns = S3;
+      S3 : st_ns = ini_last ? S6 : S3;
+      S6 : st_ns = S10;
+      S10: st_ns = fired ? S11 : S12;
       S11: st_ns = S4;
       S12: st_ns = S4;
-      S4:  st_ns = out_last ? S5  : S2;
-      S5:  st_ns = S0;
-      default: st_ns = S0;
+      S4 : st_ns = out_last ? S5 : S2;
+      S5 : st_ns = S0;
+      default: st_ns = st_ps;
     endcase
   end
 

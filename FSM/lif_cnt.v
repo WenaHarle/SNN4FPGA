@@ -1,18 +1,22 @@
 `timescale 1ns/1ps
+// ============================================================================
+// lif_cnt.v
+// Counters for (outi, ini) iteration within a layer
+// ============================================================================
 module lif_cnt #(
   parameter integer N_OUT = 30,
   parameter integer N_IN  = 30
 )(
-  input  wire       clk,
-  input  wire       rst_n,
-  input  wire       clr_all,
-  input  wire       acc_init,
-  input  wire       acc_step,
-  input  wire       next_out,
+  input  wire clk,
+  input  wire rst_n,
+  input  wire clr_all,
+  input  wire acc_init,
+  input  wire acc_step,
+  input  wire next_out,
   output wire [5:0] outi,
   output wire [5:0] ini,
-  output wire       ini_last,
-  output wire       out_last
+  output wire ini_last,
+  output wire out_last
 );
 
   reg [5:0] outi_ps, outi_ns;
@@ -31,7 +35,7 @@ module lif_cnt #(
     end
   end
 
-  always @(*) begin
+  always @* begin
     outi_ns = outi_ps;
     ini_ns  = ini_ps;
 
