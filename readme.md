@@ -144,7 +144,7 @@ The plot shows the biological behavior of a single LIF neuron over 1 microsecond
 
 **Signal Components**:
 - **spike_in (green)**: Input spike train with multiple spike events
-- **mem_q88[31:0] (blue trace)**: Membrane potential (colored time series)
+- **mem_q44[31:0] (blue trace)**: Membrane potential (colored time series)
 - **spike_out (green bar)**: Generated output spike when threshold exceeded
 
 **LIF Neuron Behavior**:
@@ -153,7 +153,7 @@ The plot shows the biological behavior of a single LIF neuron over 1 microsecond
 3. **Fire Phase**: When membrane potential exceeds threshold, generate output spike
 4. **Reset Phase**: After firing, membrane potential resets to resting value
 
-**Fixed-Point Representation** (Q8.8):
+**Fixed-Point Representation** (Q4.4):
 - Membrane state stored in 32-bit integer
 - Allows precise analog-like behavior in digital hardware
 - Quantization maintains accuracy while enabling efficient FPGA implementation
@@ -176,13 +176,13 @@ The timing diagram shows single-spike processing latency with precise measuremen
 | Parameter | Value | Details |
 |-----------|-------|---------|
 | **Processing Latency** | **22 μs** | Complete latency from input spike to valid output |
-| **Clock Frequency** | ~45 MHz | Based on timing analysis (22 μs ÷ ~1000 cycles) |
+| **Clock Frequency** | ~100 MHz | Based on timing analysis (22 μs ÷ ~1000 cycles) |
 | **Throughput** | ~45,455 spikes/sec | Maximum spike processing rate |
 | **Real-time ECG** | 1000 Hz sampling | Project: 22 samples can be processed in 22 ms |
 
 **Latency Breakdown** (Estimated):
 - **Input Load**: 2-3 μs (buffer data)
-- **FC1 Computation**: 6-7 μs (64×64 matrix operations)
+- **FC1 Computation**: 6-7 μs (30×30 LIF operations)
 - **LIF Processing**: 4-5 μs (spike generation + state update)
 - **FC2-FC3**: 6-7 μs (hidden layers)
 - **Output Formation**: 1-2 μs (format results)
@@ -225,7 +225,7 @@ Side-by-side confusion matrices comparing Python (left, blue) and FPGA (right, g
 - **Precision**: 90.4% | **Recall**: 91.1% | **F1-Score**: 90.7%
 
 **Key Findings**:
-1. **No accuracy loss** from Q8.4 quantization
+1. **No accuracy loss** from Q4.4 quantization
 2. **Perfect hardware-software match** validates implementation
 3. **Balanced performance** across all 5 cardiac classes
 4. **Robust misclassification** pattern (similar in both implementations)
@@ -245,11 +245,11 @@ Side-by-side confusion matrices comparing Python (left, blue) and FPGA (right, g
 ```
 Input (Spike Trains)
     ↓
-[FC1: 64×64 neurons] ← LIF Layer 1
+[FC1: 30 neurons] ← LIF Layer 1
     ↓
-[FC2: 64×32 neurons] ← LIF Layer 2  
+[FC2: 30 neurons] ← LIF Layer 2  
     ↓
-[FC3: 32×5 neurons]  ← Output Layer (5 classes)
+[FC3: 5 neurons]  ← Output Layer (5 classes)
     ↓
 Classification Output (N, S, V, F, Q)
 ```
@@ -289,7 +289,7 @@ Reset: V[n+1] = V_reset
 - **Time Constant (α)**: 0.95 (decay rate)
 - **Threshold (Vth)**: 1.0 (normalized units)
 - **Reset Value**: 0 (resting potential)
-- **Fixed-Point Format**: Q8.8 (32-bit internal)
+- **Fixed-Point Format**: Q4.4 (32-bit internal)
 
 ---
 
@@ -329,7 +329,7 @@ Reset: V[n+1] = V_reset
 | **Processing Latency** | 22 | μs | Single spike processing |
 | **Throughput** | 45,455 | spikes/sec | Max events processed |
 | **Real-time Factor** | 22× | faster than real-time | 1000 Hz ECG signals |
-| **Clock Frequency** | ~45 | MHz | Target FPGA frequency |
+| **Clock Frequency** | ~100 | MHz | Target FPGA frequency |
 
 ### Model Accuracy Metrics
 
@@ -345,9 +345,9 @@ Reset: V[n+1] = V_reset
 
 | Resource | Usage | FPGA Device |
 |----------|-------|------------|
-| **LUTs** | ~8K | <20% typical board |
-| **Block RAM** | ~256KB | Weight + state storage |
-| **DSP Blocks** | ~64 | Fixed-point arithmetic |
+| **LUTs** | ~1350 | <20% typical board |
+| **Block RAM** | ~1.5 | Weight + state storage |
+| **DSP Blocks** | ~0 | Fixed-point arithmetic |
 | **Power** | 50-100 | mW (estimated) |
 
 ### Comparison with Alternatives
@@ -372,7 +372,7 @@ Reset: V[n+1] = V_reset
 
 **Interface Requirements**:
 - Serial/USB for data input
-- Clock input (40-50 MHz typical)
+- Clock input (100 MHz typical)
 - Data output (classification result)
 
 ### Memory Organization
@@ -513,36 +513,10 @@ pip install snntorch --upgrade
 - Consider layer-by-layer processing instead of full parallelism
 
 **Problem**: Timing violations
-- Reduce clock frequency: try 30-40 MHz instead of 50 MHz
+- Reduce clock frequency: try 70-90 MHz instead of 100 MHz
 - Pipeline stages: add registers between layers
 - Optimize data paths: minimize routing delay
 - Use Vivado place & route optimization
-
-### Common Parameter Tuning
-
-**For faster inference**:
-```python
-# Reduce network depth
-hidden_layers = [32, 16]  # Was [64, 32]
-Q_FRAC = 3  # Reduce precision, simpler arithmetic
-```
-
-**For higher accuracy**:
-```python
-# Increase network complexity
-hidden_layers = [128, 64, 32]
-Q_FRAC = 5  # Increase precision
-epochs = 200
-```
-
-**For lower power consumption**:
-```python
-# Optimize spike sparsity
-encoding_threshold = 0.1  # Generate fewer spikes
-clock_freq = 30  # MHz, reduce power
-```
-
----
 
 ## 🎓 Educational Value
 
@@ -594,7 +568,7 @@ Students and researchers using this project can learn:
 
 - [x] Dataset generation with multiple cardiac classes
 - [x] Spike encoding methods (Delta Mod, Level Crossing)
-- [x] SNN training with Q8.4 quantization
+- [x] SNN training with Q4.4 quantization
 - [x] FPGA RTL implementation
 - [x] Hardware-software equivalence verification
 - [x] Complete documentation with images
@@ -658,7 +632,7 @@ This project combines methodologies from:
 - ✅ **Quantized SNN training** with Q8.4 fixed-point format for FPGA
 - ✅ **Complete FPGA implementation** with RTL modules and testbench
 - ✅ **Hardware-verified equivalence** with 100% accuracy match
-- ✅ **Real-time performance** (22 μs latency, <100 mW power)
+- ✅ **Real-time performance** (22 μs latency, ~100 mW power)
 - ✅ **Comprehensive documentation** with technical diagrams and analysis
 - ✅ **MATLAB reference models** for validation and characterization
 - ✅ **Clinical-grade accuracy** (>90% for 5-class cardiac classification)
@@ -668,4 +642,4 @@ This project combines methodologies from:
 
 **Last Updated**: May 2026  
 **Status**: Active Development & Maintenance  
-**Version**: 1.0 
+**Version**: 1.3 
